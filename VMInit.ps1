@@ -36,7 +36,7 @@ $ScanHttpServerBinZipUrl = Get-Content $ScanHttpServerFolder\vminit.config
 Invoke-WebRequest $ScanHttpServerBinZipUrl -OutFile $ScanHttpServerFolder\ScanHttpServer.zip
 Expand-Archive $ScanHttpServerFolder\ScanHttpServer.zip -DestinationPath $ScanHttpServerFolder\ -Force
 
-cd $ScanHttpServerFolder
+Set-Location $ScanHttpServerFolder
 
 Write-Host Scheduling task for startup
 
