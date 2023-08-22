@@ -15,7 +15,7 @@ namespace ScanHttpServer
     public class ScanHttpServer
     {
         
-        private enum requestType { SCAN }
+        private enum requestType { SCAN, DEFAULT }
 
         public static async Task HandleRequestAsync(HttpListenerContext context)
         {
@@ -28,7 +28,9 @@ namespace ScanHttpServer
 
             var requestTypeTranslation = new Dictionary<string, requestType>
             {
-                { "/scan", requestType.SCAN }
+                { "/scan", requestType.SCAN },
+                { "/", requestType.DEFAULT },
+                { "", requestType.DEFAULT }
             };
 
             requestType type = requestTypeTranslation[request.RawUrl];
@@ -37,6 +39,9 @@ namespace ScanHttpServer
             {
                 case requestType.SCAN:
                     await ScanRequestAsync(request, response);
+                    break;
+                case requestType.DEFAULT:
+                    SendResponse(response, HttpStatusCode.OK, new {});
                     break;
                 default:
                     Log.Information("No valid request type");
@@ -136,9 +141,11 @@ namespace ScanHttpServer
 
         public static void Main(string[] args)
         {
-            int port = 443;
+            int httpsPort = 443;
+            int httpPort = 80;
             string[] prefix = {
-                $"https://+:{port}/"
+                $"https://+:{httpsPort}/",
+                $"http://+:{httpPort}/"
             };
 
             SetUpLogger("ScanHttpServer.log");
