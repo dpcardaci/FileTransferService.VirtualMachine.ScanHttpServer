@@ -25,7 +25,7 @@ namespace ScanHttpServer
             string scanProcessOutput = RunScannerProcess(prefixArgs + fileFullPath + suffixArgs).GetAwaiter().GetResult();
             if (scanProcessOutput == null)
             {
-                return new ScanResults() { isError = true, errorMessage = internalErrorMassage };
+                return new ScanResults() { IsError = true, ErrorMessage = internalErrorMassage };
             }
             Log.Information("Scanning output {scanProcessOutput}", scanProcessOutput);
             return ParseScanOutput(scanProcessOutput);
@@ -62,16 +62,16 @@ namespace ScanHttpServer
             Log.Information("Parsing scan output");
             string resultString = Regex.Replace(scanProcessOutput, @"^\s*$\n|\r", string.Empty, RegexOptions.Multiline).TrimEnd();
             var linesArray = resultString.Split(new[] { '\r', '\n' });
-            var result = new ScanResults() { isError = false };
+            var result = new ScanResults() { IsError = false };
 
             foreach (string line in linesArray)
             {
                 ReadScanOutputLine(result, line);
             }
 
-            if (result.isError)
+            if (result.IsError)
             {
-                result.errorMessage = scanProcessOutput;
+                result.ErrorMessage = scanProcessOutput;
             }
             Log.Information("Done Parsing scan Output");
             return result;
@@ -86,27 +86,27 @@ namespace ScanHttpServer
                     if (words.Length < 2)
                     {
                         Log.Error("Error trying to parse scan results, Scanning line contain only one word");
-                        result.isError = true;
+                        result.IsError = true;
                         return;
                     }
 
                     if (int.TryParse(words[^2], out var numOfThreatsFound))
                     {
-                        result.isThreat = true;
+                        result.IsThreat = true;
                         break;
                     }
                     else
                     {
-                        result.isThreat = false;
+                        result.IsThreat = false;
                         return;
                     }
 
                 case ThreatTypeLineStart:
-                    result.threatType = String.Join(' ', words.Skip(1));
+                    result.ThreatType = String.Join(' ', words.Skip(1));
                     return;
 
                 case ErrorLineStart:
-                    result.isError = true;
+                    result.IsError = true;
                     return;
             }
         }

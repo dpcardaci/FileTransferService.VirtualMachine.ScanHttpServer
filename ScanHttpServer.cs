@@ -9,12 +9,20 @@ using System.Net;
 using System.Threading.Tasks;
 using System.Reflection;
 using System.Linq;
+using Azure.Messaging.EventGrid;
+using System.ComponentModel.DataAnnotations;
+using FileTransferService.Functions.Core;
+using System.Threading;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.AzureAppConfiguration;
+using Azure.Identity;
+using Microsoft.Extensions.Hosting;
+
 
 namespace ScanHttpServer
 {
     public class ScanHttpServer
     {
-        
         private enum requestType { SCAN, DEFAULT }
 
         public static async Task HandleRequestAsync(HttpListenerContext context)
@@ -38,7 +46,18 @@ namespace ScanHttpServer
             switch (type)
             {
                 case requestType.SCAN:
-                    await ScanRequestAsync(request, response);
+                    Log.Information("Scan request received");
+                    TestRequestContentType(request, response);
+
+                    Stream requestInputStream  = new MemoryStream();
+                    await request.InputStream.CopyToAsync(requestInputStream);
+                    requestInputStream.Position = 0;
+
+                    Log.Information("Starting a new task to begin scanning");
+                    Task.Run(() => ScanRequest(requestInputStream));
+
+                    Log.Information("Respond with OK to scan request");
+                    SendResponse(response, HttpStatusCode.Accepted, new {});
                     break;
                 case requestType.DEFAULT:
                     SendResponse(response, HttpStatusCode.OK, new {});
@@ -50,59 +69,79 @@ namespace ScanHttpServer
             Log.Information("Done Handling Request {requestUrl}", request.Url);
         }
 
-        public static async Task ScanRequestAsync(HttpListenerRequest request, HttpListenerResponse response)
+        private static void TestRequestContentType(HttpListenerRequest request, HttpListenerResponse response) 
         {
+            Log.Information("Testing request content type");
             if (!request.ContentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase))
-            {
+            {  
+                RaiseEventGridEvent(ScanEventGridEventType.Error, 
+                                               new ScanError("Wrong request Content-type"));            
                 Log.Error("Wrong request Content-type for scanning, {requestContentType}", request.ContentType);
+                SendResponse(response, HttpStatusCode.BadRequest, new { ErrorMessage = "Wrong request Content-type" });
                 return;
             };
+        }
 
-            var scanner = new WindowsDefenderScanner();
-            var parser = MultipartFormDataParser.Parse(request.InputStream);
+        public static void ScanRequest(object data)
+        {
+            Log.Information("Scan request initiated");
+            try
+            {                
+                var requestParameters = (Stream)data;
+                var scanner = new WindowsDefenderScanner();
+                var parser = MultipartFormDataParser.Parse(requestParameters);
+                
+                Log.Information("Parsing request parameters");
+                string fileName = parser.GetParameterValue("fileName");
+                string filePath = parser.GetParameterValue("filePath");
 
-            string blobName = parser.GetParameterValue("blobName");
-            string containerName = parser.GetParameterValue("containerName");
+                Log.Information($"Beginning to download file: {fileName}");
+                string tempFileName = FileUtilities.DownloadToTempFileAsync(fileName, filePath).GetAwaiter().GetResult();
 
-            string tempFileName = await FileUtilities.DownloadToTempFileAsync(blobName, containerName);
+                if (tempFileName == null)
+                {    
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, 
+                                                   new ScanError("Can't save the file received in the request"));
+                    Log.Error("Can't save the file received in the request");
+                    return;
+                }
 
-            if (tempFileName == null)
-            {
-                Log.Error("Can't save the file received in the request");
-                return;
-            }
+                Log.Information($"Scanning file: {fileName}");
+                var result = scanner.Scan(tempFileName);
 
-            var result = scanner.Scan(tempFileName);
-
-            if(result.isError)
-            {
-                Log.Error("Error during the scanning Error message:{errorMessage}", result.errorMessage);
-
-                var data = new
+                if(result.IsError)
                 {
-                    ErrorMessage = result.errorMessage,
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, 
+                                                   new ScanError($"Error during the scan Error message: {result.ErrorMessage}"));
+                    Log.Error($"Error during the scan Error message: {result.ErrorMessage}");
+                    return;
+                }
+
+                TransferInfo transferInfo = new TransferInfo
+                {
+                    FileName = fileName,
+                    FilePath = filePath,
+                    IsThreat = result.IsThreat,
+                    ThreatType = result.ThreatType
                 };
 
-                SendResponse(response, HttpStatusCode.InternalServerError, data);
-                return;
+                try
+                {
+                    File.Delete(tempFileName);
+                }
+                catch (Exception e)
+                {
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, new ScanError($"Exception caught when trying to delete temp file: {tempFileName}."));
+                    Log.Error(e, $"Exception caught when trying to delete temp file: {tempFileName}.");
+                    return;
+                }
+            
+                RaiseEventGridEvent(ScanEventGridEventType.Completed, transferInfo);
+                Log.Information($"Scan completed: {transferInfo}");
             }
-
-            var responseData = new
+            catch(Exception e)
             {
-                FileName = blobName,
-                isThreat = result.isThreat,
-                ThreatType = result.threatType
-            };
-
-            SendResponse(response, HttpStatusCode.OK, responseData);
-
-            try
-            {
-                File.Delete(tempFileName);
-            }
-            catch (Exception e)
-            {
-                Log.Error(e, "Exception caught when trying to delete temp file:{tempFileName}.", tempFileName);
+                Log.Error(e, "Exception caught when trying to scan");
             }
         }
 
@@ -127,13 +166,63 @@ namespace ScanHttpServer
             }
         }
 
+        private static void RaiseEventGridEvent(ScanEventGridEventType scanEventGridEventType, object data) 
+        {
+            string appConfigurationConnString = Environment.GetEnvironmentVariable("APP_CONFIGURATION_CONN_STRING", EnvironmentVariableTarget.Machine);
+            var builder = new ConfigurationBuilder();
+            var _configuration = builder.AddAzureAppConfiguration(options =>
+                options.Connect(appConfigurationConnString)
+                    .ConfigureKeyVault(kv =>
+                    {
+                        kv.SetCredential(new ClientSecretCredential(
+                            Environment.GetEnvironmentVariable("AZURE_TENANT_ID", EnvironmentVariableTarget.Machine),
+                            Environment.GetEnvironmentVariable("AZURE_CLIENT_ID", EnvironmentVariableTarget.Machine),
+                            Environment.GetEnvironmentVariable("AZURE_CLIENT_SECRET", EnvironmentVariableTarget.Machine),
+                            new ClientSecretCredentialOptions
+                            {
+                                AuthorityHost = AzureAuthorityHosts.AzureGovernment
+                            }
+                        ));
+                    })
+            ).Build();
+
+            EventGridPublisherClient scanCompletedPublisher = new EventGridPublisherClient(
+                new Uri(_configuration["ScanCompletedTopicUri"]), 
+                new Azure.AzureKeyCredential(_configuration["ScanCompletedTopicKey"]));
+
+            EventGridPublisherClient scanErrorPublisher = new EventGridPublisherClient(
+                new Uri(_configuration["ScanErrorTopicUri"]), 
+                new Azure.AzureKeyCredential(_configuration["ScanErrorTopicKey"]));
+
+            EventGridEvent scanEventGridEvent = new EventGridEvent
+            (
+                "FileTransferService/Scan",
+                scanEventGridEventType.ToString(),
+                "1.0", 
+                data
+            );
+
+            switch (scanEventGridEventType)
+            {
+                case ScanEventGridEventType.Completed:
+                    scanCompletedPublisher.SendEvent(scanEventGridEvent);
+                    break;
+                case ScanEventGridEventType.Error:
+                    scanErrorPublisher.SendEvent(scanEventGridEvent);
+                    break;
+                default:
+                    Log.Information("No valid ScanEventGridEventType");
+                    break;
+            }
+        }
+
         public static void SetUpLogger(string logFileName)
         {
             string runDirPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             string logFilePath = Path.Combine(runDirPath, "log", logFileName);
             Log.Logger = new LoggerConfiguration()
                 .Enrich.WithExceptionDetails()
-                .WriteTo.File(logFilePath)
+                .WriteTo.File(logFilePath, rollingInterval: RollingInterval.Day)
                 .WriteTo.Console()
                 .MinimumLevel.Debug()
                 .CreateLogger();
@@ -148,7 +237,7 @@ namespace ScanHttpServer
                 $"http://+:{httpPort}/"
             };
 
-            SetUpLogger("ScanHttpServer.log");
+            SetUpLogger("ScanHttpServer-.log");
             var listener = new HttpListener();
 
             foreach (string s in prefix)

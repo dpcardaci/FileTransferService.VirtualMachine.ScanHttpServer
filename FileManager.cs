@@ -6,6 +6,10 @@ using Azure.Storage;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
 using Azure.Storage.Blobs.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.AzureAppConfiguration;
+using Azure.Identity;
+using Azure;
 
 namespace ScanHttpServer
 {
@@ -33,30 +37,46 @@ namespace ScanHttpServer
 
         public static async Task<string> DownloadToTempFileAsync(string blobName, string blobContainer)
         {
-            Log.Information("In DownloadToTempFile function.");
+            Log.Information("Begin downloading to temp file");
+
+            string appConfigurationConnString = Environment.GetEnvironmentVariable("APP_CONFIGURATION_CONN_STRING", EnvironmentVariableTarget.Machine);
+            var builder = new ConfigurationBuilder();
+            var configuration = builder.AddAzureAppConfiguration(options =>
+                options.Connect(appConfigurationConnString)
+                    .ConfigureKeyVault(kv =>
+                    {
+                        kv.SetCredential(new ClientSecretCredential(
+                            Environment.GetEnvironmentVariable("AZURE_TENANT_ID", EnvironmentVariableTarget.Machine),
+                            Environment.GetEnvironmentVariable("AZURE_CLIENT_ID", EnvironmentVariableTarget.Machine),
+                            Environment.GetEnvironmentVariable("AZURE_CLIENT_SECRET", EnvironmentVariableTarget.Machine),
+                            new ClientSecretCredentialOptions
+                            {
+                                AuthorityHost = AzureAuthorityHosts.AzureGovernment
+                            }
+                        ));
+                    })
+            ).Build();
 
             string tempFileName = Path.GetTempFileName();
-            Log.Information("tmpFileName: {tempFileName}", tempFileName);
+            Log.Information($"Temp file name: {tempFileName}");
 
             string baseStoragePath = "blob.core.usgovcloudapi.net";
-            string accountName = Environment.GetEnvironmentVariable("FtsStorageAccountName", EnvironmentVariableTarget.Machine);
+            string accountName = configuration["UploadStorageAccountName"];
             Log.Information($"Account name: {accountName}");
 
-            string accountKey = Environment.GetEnvironmentVariable("FtsStorageAccountKey", EnvironmentVariableTarget.Machine);
-            Log.Information($"Account key: {accountKey}");
+            string accountSas = configuration["UploadStorageAccountSasToken"];
+            Log.Information($"Account Sas: {accountSas}");
 
             string path = $"https://{accountName}.{baseStoragePath}/{blobContainer}/{blobName}";
-            Log.Information($"path: {path}");
+            Log.Information($"Path: {path}");
 
-            Uri blobUri = new Uri(path);
-
+            Uri fileUri = new Uri(path);
 
             try
             {
-
                 Log.Information("Create BlobBlockCient");
-                StorageSharedKeyCredential credential = new StorageSharedKeyCredential(accountName, accountKey);
-                BlockBlobClient blockBlobClient = new BlockBlobClient(blobUri, credential);
+                AzureSasCredential credential = new AzureSasCredential(accountSas);
+                BlockBlobClient blockBlobClient = new BlockBlobClient(fileUri, credential);
 
                 await blockBlobClient.DownloadToAsync(tempFileName);
                 Log.Information("File created Successfully");

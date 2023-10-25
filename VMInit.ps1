@@ -4,8 +4,6 @@ $runLoopPath = "$ScanHttpServerFolder\runLoop.ps1"
 
 Start-Transcript -Path C:\VmInit.log
 
-Write-Host Version 1.3.5.2
-
 New-Item -ItemType Directory C:\ScanHttpServer
 New-Item -ItemType Directory $ScanHttpServerFolder
 
@@ -15,19 +13,24 @@ if($args.Count -gt 0){
     if(-Not (Test-Path $ScanHttpServerFolder\vminit.config)){
         New-Item $ScanHttpServerFolder\vminit.config
     }
-    $scanHttpServerPackageUrl = $args[2]
+    $scanHttpServerPackageUrl = $args[4]
     $scanHttpServerPackageUrl = $scanHttpServerPackageUrl.SubString(0, $scanHttpServerPackageUrl.Length - 1)
     Set-Content $ScanHttpServerFolder\vminit.config $scanHttpServerPackageUrl
 
-    $accountName = $args[0]
-    $accountName = $accountName.SubString(0, $accountName.Length - 1)
-    $accountKey = $args[1]
-    $accountKey = $accountKey.SubString(0, $accountKey.Length - 1)
-    $supportHttp = $args[3]
+    $tenantId = $args[0]
+    $tenantId = $tenantId.SubString(0, $tenantId.Length - 1)
+    $clientId = $args[1]
+    $clientId = $clientId.SubString(0, $clientId.Length - 1)
+    $clientSecret = $args[2]
+    $clientSecret = $clientSecret.SubString(0, $clientSecret.Length - 1)
+    $appConfigurationConnString = $args[3]
+    $appConfigurationConnString = $appConfigurationConnString.SubString(0, $appConfigurationConnString.Length - 1)
+    $supportHttp = $args[5]
 
-    [Environment]::SetEnvironmentVariable("FtsStorageAccountName", $accountName, "Machine")
-    [Environment]::SetEnvironmentVariable("FtsStorageAccountKey", $accountKey, "Machine")
-    [Environment]::SetEnvironmentVariable("FtsSupportHttp", $supportHttp, "Machine")
+    [Environment]::SetEnvironmentVariable("AZURE_TENANT_ID", $tenantId, "Machine")
+    [Environment]::SetEnvironmentVariable("AZURE_CLIENT_ID", $clientId, "Machine")
+    [Environment]::SetEnvironmentVariable("AZURE_CLIENT_SECRET", $clientSecret, "Machine")
+    [Environment]::SetEnvironmentVariable("APP_CONFIGURATION_CONN_STRING", $appConfigurationConnString, "Machine")
 }
 
 $ScanHttpServerBinZipUrl = Get-Content $ScanHttpServerFolder\vminit.config
