@@ -1,5 +1,5 @@
 ﻿using HttpMultipartParser;
-using Newtonsoft.Json;
+using System.Text.Json;
 using Serilog;
 using Serilog.Exceptions;
 using System;
@@ -11,7 +11,7 @@ using System.Reflection;
 using System.Linq;
 using Azure.Messaging.EventGrid;
 using System.ComponentModel.DataAnnotations;
-using FileTransferService.Functions.Core;
+using FileTransferService.Core;
 using System.Threading;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.AzureAppConfiguration;
@@ -72,12 +72,12 @@ namespace ScanHttpServer
         private static void TestRequestContentType(HttpListenerRequest request, HttpListenerResponse response) 
         {
             Log.Information("Testing request content type");
-            if (!request.ContentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase))
+            if (!request.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
             {  
                 RaiseEventGridEvent(ScanEventGridEventType.Error, 
                                                new ScanError("Wrong request Content-type"));            
                 Log.Error("Wrong request Content-type for scanning, {requestContentType}", request.ContentType);
-                SendResponse(response, HttpStatusCode.BadRequest, new { ErrorMessage = "Wrong request Content-type" });
+                SendResponse(response, HttpStatusCode.BadRequest, new { ErrorMessage = $"Wrong request Content-type: {request.ContentType}" });
                 return;
             };
         }
@@ -86,17 +86,20 @@ namespace ScanHttpServer
         {
             Log.Information("Scan request initiated");
             try
-            {                
-                var requestParameters = (Stream)data;
+            {   
+                JsonSerializer serializer = new JsonSerializer();
+                TransferInfo transferInfo = serializer.Deserialize<TransferInfo>(new JsonTextReader(new StreamReader((Stream)data)));
+                            
+                //var requestParameters = (Stream)data;
                 var scanner = new WindowsDefenderScanner();
-                var parser = MultipartFormDataParser.Parse(requestParameters);
+                //var parser = MultipartFormDataParser.Parse(requestParameters);
                 
-                Log.Information("Parsing request parameters");
-                string fileName = parser.GetParameterValue("fileName");
-                string filePath = parser.GetParameterValue("filePath");
+                //Log.Information("Parsing request parameters");
+                //string fileName = parser.GetParameterValue("fileName");
+                //string filePath = parser.GetParameterValue("filePath");
 
-                Log.Information($"Beginning to download file: {fileName}");
-                string tempFileName = FileUtilities.DownloadToTempFileAsync(fileName, filePath).GetAwaiter().GetResult();
+                Log.Information($"Beginning to download file: {transferInfo.FileName} from: {transferInfo.FilePath}");
+                string tempFileName = FileUtilities.DownloadToTempFileAsync(transferInfo.FileName, transferInfo.FilePath).GetAwaiter().GetResult();
 
                 if (tempFileName == null)
                 {    
@@ -117,10 +120,19 @@ namespace ScanHttpServer
                     return;
                 }
 
-                TransferInfo transferInfo = new TransferInfo
+                // TransferInfo transferInfo = new TransferInfo
+                // {
+                //     FileName = fileName,
+                //     FilePath = filePath,
+                //     ScanInfo = new ScanInfo
+                //     {
+                //         IsThreat = result.IsThreat,
+                //         ThreatType = result.ThreatType
+                //     }
+                    
+                // };
+                transferInfo.ScanInfo = new ScanInfo
                 {
-                    FileName = fileName,
-                    FilePath = filePath,
                     IsThreat = result.IsThreat,
                     ThreatType = result.ThreatType
                 };

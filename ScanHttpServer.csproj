@@ -18,11 +18,12 @@
     <PackageReference Include="Serilog.Exceptions" Version="6.1.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="3.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="4.1.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
     <PackageReference Include="Tmds.ExecFunction" Version="0.6.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\FileTransferService.Functions.Core\FileTransferService.Functions.Core.csproj" />
+    <ProjectReference Include="..\FileTransferService.Core\FileTransferService.Core.csproj" />
   </ItemGroup>
 
 </Project>
