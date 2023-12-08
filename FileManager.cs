@@ -2,12 +2,8 @@
 using System.IO;
 using System.Threading.Tasks;
 using Serilog;
-using Azure.Storage;
-using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
-using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Configuration.AzureAppConfiguration;
 using Azure.Identity;
 using Azure;
 

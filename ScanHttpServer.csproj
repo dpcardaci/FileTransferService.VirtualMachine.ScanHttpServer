@@ -10,7 +10,6 @@
     <PackageReference Include="Azure.Identity" Version="1.10.3" />
     <PackageReference Include="Azure.Messaging.EventGrid" Version="4.18.0" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.16.0" />
-    <PackageReference Include="HttpMultipartParser" Version="5.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.AzureAppConfiguration" Version="6.1.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="7.0.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
@@ -19,7 +18,6 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="3.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="4.1.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.0" />
-    <PackageReference Include="Tmds.ExecFunction" Version="0.6.0" />
   </ItemGroup>
 
   <ItemGroup>

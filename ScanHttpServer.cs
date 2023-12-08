@@ -1,5 +1,4 @@
-﻿using HttpMultipartParser;
-using System.Text.Json;
+﻿using System.Text.Json;
 using Serilog;
 using Serilog.Exceptions;
 using System;
@@ -8,16 +7,10 @@ using System.IO;
 using System.Net;
 using System.Threading.Tasks;
 using System.Reflection;
-using System.Linq;
 using Azure.Messaging.EventGrid;
-using System.ComponentModel.DataAnnotations;
 using FileTransferService.Core;
-using System.Threading;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Configuration.AzureAppConfiguration;
 using Azure.Identity;
-using Microsoft.Extensions.Hosting;
-
 
 namespace ScanHttpServer
 {
@@ -49,12 +42,12 @@ namespace ScanHttpServer
                     Log.Information("Scan request received");
                     TestRequestContentType(request, response);
 
-                    Stream requestInputStream  = new MemoryStream();
-                    await request.InputStream.CopyToAsync(requestInputStream);
-                    requestInputStream.Position = 0;
+                    // MemoryStream requestInputStream  = new MemoryStream();
+                    // await request.InputStream.CopyToAsync(requestInputStream);
+                    // requestInputStream.Position = 0;
 
                     Log.Information("Starting a new task to begin scanning");
-                    Task.Run(() => ScanRequest(requestInputStream));
+                    Task.Run(() => ScanRequest(request));
 
                     Log.Information("Respond with OK to scan request");
                     SendResponse(response, HttpStatusCode.Accepted, new {});
@@ -74,63 +67,67 @@ namespace ScanHttpServer
             Log.Information("Testing request content type");
             if (!request.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
             {  
-                RaiseEventGridEvent(ScanEventGridEventType.Error, 
-                                               new ScanError("Wrong request Content-type"));            
+                TransferInfo transferInfo = GetTransferInfoFromRequest(request);
+                TransferError transferError = new TransferError
+                {
+                    TraTransferId = transferInfo.TransferId,
+                    OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                    OriginationDateTime = transferInfo.OriginationDateTime,
+                    FileName = transferInfo.FileName,
+                    Message = $"Wrong request Content-type: {request.ContentType}",
+                };
+                RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);            
                 Log.Error("Wrong request Content-type for scanning, {requestContentType}", request.ContentType);
                 SendResponse(response, HttpStatusCode.BadRequest, new { ErrorMessage = $"Wrong request Content-type: {request.ContentType}" });
                 return;
             };
         }
 
-        public static void ScanRequest(object data)
+        public static void ScanRequest(HttpListenerRequest request)
         {
             Log.Information("Scan request initiated");
             try
             {   
-                JsonSerializer serializer = new JsonSerializer();
-                TransferInfo transferInfo = serializer.Deserialize<TransferInfo>(new JsonTextReader(new StreamReader((Stream)data)));
-                            
-                //var requestParameters = (Stream)data;
-                var scanner = new WindowsDefenderScanner();
-                //var parser = MultipartFormDataParser.Parse(requestParameters);
+                TransferInfo transferInfo = GetTransferInfoFromRequest(request);
                 
-                //Log.Information("Parsing request parameters");
-                //string fileName = parser.GetParameterValue("fileName");
-                //string filePath = parser.GetParameterValue("filePath");
+                var scanner = new WindowsDefenderScanner();
 
                 Log.Information($"Beginning to download file: {transferInfo.FileName} from: {transferInfo.FilePath}");
                 string tempFileName = FileUtilities.DownloadToTempFileAsync(transferInfo.FileName, transferInfo.FilePath).GetAwaiter().GetResult();
 
                 if (tempFileName == null)
-                {    
-                    RaiseEventGridEvent(ScanEventGridEventType.Error, 
-                                                   new ScanError("Can't save the file received in the request"));
+                {   
+                    TransferError transferError = new TransferError
+                    {
+                        TraTransferId = transferInfo.TransferId,
+                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        OriginationDateTime = transferInfo.OriginationDateTime,
+                        FileName = transferInfo.FileName,
+                        Message = $"Can't save the file received in the request",
+                    };
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error("Can't save the file received in the request");
                     return;
                 }
 
-                Log.Information($"Scanning file: {fileName}");
+                Log.Information($"Scanning file: {transferInfo.FileName}");
                 var result = scanner.Scan(tempFileName);
 
                 if(result.IsError)
                 {
-                    RaiseEventGridEvent(ScanEventGridEventType.Error, 
-                                                   new ScanError($"Error during the scan Error message: {result.ErrorMessage}"));
+                    TransferError transferError = new TransferError
+                    {
+                        TraTransferId = transferInfo.TransferId,
+                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        OriginationDateTime = transferInfo.OriginationDateTime,
+                        FileName = transferInfo.FileName,
+                        Message = $"Error during the scan Error message: {result.ErrorMessage}",
+                    };
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error($"Error during the scan Error message: {result.ErrorMessage}");
                     return;
                 }
 
-                // TransferInfo transferInfo = new TransferInfo
-                // {
-                //     FileName = fileName,
-                //     FilePath = filePath,
-                //     ScanInfo = new ScanInfo
-                //     {
-                //         IsThreat = result.IsThreat,
-                //         ThreatType = result.ThreatType
-                //     }
-                    
-                // };
                 transferInfo.ScanInfo = new ScanInfo
                 {
                     IsThreat = result.IsThreat,
@@ -143,7 +140,15 @@ namespace ScanHttpServer
                 }
                 catch (Exception e)
                 {
-                    RaiseEventGridEvent(ScanEventGridEventType.Error, new ScanError($"Exception caught when trying to delete temp file: {tempFileName}."));
+                    TransferError transferError = new TransferError
+                    {
+                        TraTransferId = transferInfo.TransferId,
+                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        OriginationDateTime = transferInfo.OriginationDateTime,
+                        FileName = transferInfo.FileName,
+                        Message = $"Exception caught when trying to delete temp file: {tempFileName}.",
+                    };
+                    RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error(e, $"Exception caught when trying to delete temp file: {tempFileName}.");
                     return;
                 }
@@ -163,7 +168,7 @@ namespace ScanHttpServer
             object responseData)
         {
             response.StatusCode = (int)statusCode;
-            string responseString = JsonConvert.SerializeObject(responseData);
+            string responseString = JsonSerializer.Serialize(responseData);
             byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
             response.ContentLength64 = buffer.Length;
             var responseOutputStream = response.OutputStream;
@@ -178,7 +183,7 @@ namespace ScanHttpServer
             }
         }
 
-        private static void RaiseEventGridEvent(ScanEventGridEventType scanEventGridEventType, object data) 
+        private static void RaiseEventGridEvent(ScanEventGridEventType scanEventGridEventType, ITransferBase transferData) 
         {
             string appConfigurationConnString = Environment.GetEnvironmentVariable("APP_CONFIGURATION_CONN_STRING", EnvironmentVariableTarget.Machine);
             var builder = new ConfigurationBuilder();
@@ -211,7 +216,7 @@ namespace ScanHttpServer
                 "FileTransferService/Scan",
                 scanEventGridEventType.ToString(),
                 "1.0", 
-                data
+                transferData
             );
 
             switch (scanEventGridEventType)
@@ -228,6 +233,21 @@ namespace ScanHttpServer
             }
         }
 
+        private TransferInfo GetTransferInfoFromRequest(HttpListenerRequest request)
+        {
+            Log.Information("Getting transfer info from request");
+            StreamReader streamReader = new StreamReader(request.InputStream);
+            string transferInfoJsonString = streamReader.ReadToEnd();
+            Log.Information("transferInfoJsonString: {transferInfoJsonString}", transferInfoJsonString);
+
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            TransferInfo transferInfo = JsonSerializer.Deserialize<TransferInfo>(transferInfoJsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return transferInfo;
+        }
+        
         public static void SetUpLogger(string logFileName)
         {
             string runDirPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
