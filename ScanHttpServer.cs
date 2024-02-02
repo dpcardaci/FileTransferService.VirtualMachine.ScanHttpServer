@@ -46,8 +46,10 @@ namespace ScanHttpServer
                     // await request.InputStream.CopyToAsync(requestInputStream);
                     // requestInputStream.Position = 0;
 
+                    TransferInfo transferInfo = GetTransferInfoFromRequest(request);
+
                     Log.Information("Starting a new task to begin scanning");
-                    Task.Run(() => ScanRequest(request));
+                    Task.Run(() => ScanRequest(transferInfo));
 
                     Log.Information("Respond with OK to scan request");
                     SendResponse(response, HttpStatusCode.Accepted, new {});
@@ -70,8 +72,8 @@ namespace ScanHttpServer
                 TransferInfo transferInfo = GetTransferInfoFromRequest(request);
                 TransferError transferError = new TransferError
                 {
-                    TraTransferId = transferInfo.TransferId,
-                    OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                    TransferId = transferInfo.TransferId,
+                    OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
                     OriginationDateTime = transferInfo.OriginationDateTime,
                     FileName = transferInfo.FileName,
                     Message = $"Wrong request Content-type: {request.ContentType}",
@@ -83,13 +85,11 @@ namespace ScanHttpServer
             };
         }
 
-        public static void ScanRequest(HttpListenerRequest request)
+        public static void ScanRequest(TransferInfo transferInfo)
         {
             Log.Information("Scan request initiated");
             try
-            {   
-                TransferInfo transferInfo = GetTransferInfoFromRequest(request);
-                
+            {                   
                 var scanner = new WindowsDefenderScanner();
 
                 Log.Information($"Beginning to download file: {transferInfo.FileName} from: {transferInfo.FilePath}");
@@ -99,8 +99,8 @@ namespace ScanHttpServer
                 {   
                     TransferError transferError = new TransferError
                     {
-                        TraTransferId = transferInfo.TransferId,
-                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        TransferId = transferInfo.TransferId,
+                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
                         OriginationDateTime = transferInfo.OriginationDateTime,
                         FileName = transferInfo.FileName,
                         Message = $"Can't save the file received in the request",
@@ -117,8 +117,8 @@ namespace ScanHttpServer
                 {
                     TransferError transferError = new TransferError
                     {
-                        TraTransferId = transferInfo.TransferId,
-                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        TransferId = transferInfo.TransferId,
+                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
                         OriginationDateTime = transferInfo.OriginationDateTime,
                         FileName = transferInfo.FileName,
                         Message = $"Error during the scan Error message: {result.ErrorMessage}",
@@ -142,8 +142,8 @@ namespace ScanHttpServer
                 {
                     TransferError transferError = new TransferError
                     {
-                        TraTransferId = transferInfo.TransferId,
-                        OringinatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                        TransferId = transferInfo.TransferId,
+                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
                         OriginationDateTime = transferInfo.OriginationDateTime,
                         FileName = transferInfo.FileName,
                         Message = $"Exception caught when trying to delete temp file: {tempFileName}.",
@@ -183,7 +183,7 @@ namespace ScanHttpServer
             }
         }
 
-        private static void RaiseEventGridEvent(ScanEventGridEventType scanEventGridEventType, ITransferBase transferData) 
+        private static void RaiseEventGridEvent(ScanEventGridEventType scanEventGridEventType, object data) 
         {
             string appConfigurationConnString = Environment.GetEnvironmentVariable("APP_CONFIGURATION_CONN_STRING", EnvironmentVariableTarget.Machine);
             var builder = new ConfigurationBuilder();
@@ -216,7 +216,7 @@ namespace ScanHttpServer
                 "FileTransferService/Scan",
                 scanEventGridEventType.ToString(),
                 "1.0", 
-                transferData
+                data
             );
 
             switch (scanEventGridEventType)
@@ -233,7 +233,7 @@ namespace ScanHttpServer
             }
         }
 
-        private TransferInfo GetTransferInfoFromRequest(HttpListenerRequest request)
+        private static TransferInfo GetTransferInfoFromRequest(HttpListenerRequest request)
         {
             Log.Information("Getting transfer info from request");
             StreamReader streamReader = new StreamReader(request.InputStream);
