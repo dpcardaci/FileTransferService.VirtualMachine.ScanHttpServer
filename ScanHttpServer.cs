@@ -11,6 +11,7 @@ using Azure.Messaging.EventGrid;
 using FileTransferService.Core;
 using Microsoft.Extensions.Configuration;
 using Azure.Identity;
+using Azure.Core;
 
 namespace ScanHttpServer
 {
@@ -42,10 +43,6 @@ namespace ScanHttpServer
                     Log.Information("Scan request received");
                     TestRequestContentType(request, response);
 
-                    // MemoryStream requestInputStream  = new MemoryStream();
-                    // await request.InputStream.CopyToAsync(requestInputStream);
-                    // requestInputStream.Position = 0;
-
                     TransferInfo transferInfo = GetTransferInfoFromRequest(request);
 
                     Log.Information("Starting a new task to begin scanning");
@@ -70,14 +67,8 @@ namespace ScanHttpServer
             if (!request.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
             {  
                 TransferInfo transferInfo = GetTransferInfoFromRequest(request);
-                TransferError transferError = new TransferError
-                {
-                    TransferId = transferInfo.TransferId,
-                    OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
-                    OriginationDateTime = transferInfo.OriginationDateTime,
-                    FileName = transferInfo.FileName,
-                    Message = $"Wrong request Content-type: {request.ContentType}",
-                };
+                TransferError transferError = CreateTransferError(transferInfo, $"Wrong request Content-type: {request.ContentType}");
+
                 RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);            
                 Log.Error("Wrong request Content-type for scanning, {requestContentType}", request.ContentType);
                 SendResponse(response, HttpStatusCode.BadRequest, new { ErrorMessage = $"Wrong request Content-type: {request.ContentType}" });
@@ -96,15 +87,9 @@ namespace ScanHttpServer
                 string tempFileName = FileUtilities.DownloadToTempFileAsync(transferInfo.FileName, transferInfo.FilePath).GetAwaiter().GetResult();
 
                 if (tempFileName == null)
-                {   
-                    TransferError transferError = new TransferError
-                    {
-                        TransferId = transferInfo.TransferId,
-                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
-                        OriginationDateTime = transferInfo.OriginationDateTime,
-                        FileName = transferInfo.FileName,
-                        Message = $"Can't save the file received in the request",
-                    };
+                {
+                    TransferError transferError = CreateTransferError(transferInfo, "Can't save the file received in the request");
+
                     RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error("Can't save the file received in the request");
                     return;
@@ -115,14 +100,8 @@ namespace ScanHttpServer
 
                 if(result.IsError)
                 {
-                    TransferError transferError = new TransferError
-                    {
-                        TransferId = transferInfo.TransferId,
-                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
-                        OriginationDateTime = transferInfo.OriginationDateTime,
-                        FileName = transferInfo.FileName,
-                        Message = $"Error during the scan Error message: {result.ErrorMessage}",
-                    };
+                    TransferError transferError = CreateTransferError(transferInfo, $"Error during the scan Error message: {result.ErrorMessage}");
+
                     RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error($"Error during the scan Error message: {result.ErrorMessage}");
                     return;
@@ -140,14 +119,8 @@ namespace ScanHttpServer
                 }
                 catch (Exception e)
                 {
-                    TransferError transferError = new TransferError
-                    {
-                        TransferId = transferInfo.TransferId,
-                        OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
-                        OriginationDateTime = transferInfo.OriginationDateTime,
-                        FileName = transferInfo.FileName,
-                        Message = $"Exception caught when trying to delete temp file: {tempFileName}.",
-                    };
+                    TransferError transferError = CreateTransferError(transferInfo, $"Exception caught when trying to delete temp file: {tempFileName}.");
+
                     RaiseEventGridEvent(ScanEventGridEventType.Error, transferError);
                     Log.Error(e, $"Exception caught when trying to delete temp file: {tempFileName}.");
                     return;
@@ -246,6 +219,20 @@ namespace ScanHttpServer
             };
             TransferInfo transferInfo = JsonSerializer.Deserialize<TransferInfo>(transferInfoJsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             return transferInfo;
+        }
+
+        private static TransferError CreateTransferError(TransferInfo transferInfo, string message)
+        {
+            TransferError transferError = new TransferError
+            {
+                TransferId = transferInfo.TransferId,
+                OriginatingUserPrincipalName = transferInfo.OriginatingUserPrincipalName,
+                OnBehalfOfUserPrincipalName = transferInfo.OnBehalfOfUserPrincipalName,
+                OriginationDateTime = transferInfo.OriginationDateTime,
+                FileName = transferInfo.FileName,
+                Message = message,
+            };
+            return transferError;
         }
         
         public static void SetUpLogger(string logFileName)
